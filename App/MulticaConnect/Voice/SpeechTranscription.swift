@@ -71,16 +71,24 @@ final class SpeechTranscription {
 
     // MARK: - Permission and assets
 
-    /// Asks for the microphone once. Returns `false` if the person said no.
+    /// The privacy keys iOS demands before this app may touch the microphone or
+    /// on-device speech.
     ///
-    /// The usage description is checked first because iOS does not refuse an app
-    /// that asks without one — it kills it, with no error to catch. Checking
-    /// turns that guaranteed crash into a sentence naming the missing key.
+    /// A missing one is not an error iOS reports back: it terminates the process
+    /// with `SIGKILL` and a TCC termination reason, which no `catch` can see and
+    /// which points at whatever frame the thread happened to be in. Checking the
+    /// bundle first turns that into a sentence naming the key.
+    static var missingUsageDescriptionKeys: [String] {
+        ["NSMicrophoneUsageDescription", "NSSpeechRecognitionUsageDescription"].filter { key in
+            let value = Bundle.main.object(forInfoDictionaryKey: key) as? String
+            return value?.isEmpty != false
+        }
+    }
+
+    /// Asks for the microphone once. Returns `false` if the person said no.
     static func requestMicrophoneAccess() async throws -> Bool {
-        let key = "NSMicrophoneUsageDescription"
-        let description = Bundle.main.object(forInfoDictionaryKey: key) as? String
-        guard let description, !description.isEmpty else {
-            throw Failure.missingUsageDescription(key)
+        if let missing = missingUsageDescriptionKeys.first {
+            throw Failure.missingUsageDescription(missing)
         }
 
         switch AVAudioApplication.shared.recordPermission {

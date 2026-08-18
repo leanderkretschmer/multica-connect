@@ -113,6 +113,11 @@ final class VoiceCallModel {
     private var endpointTask: Task<Void, Never>?
     private var respondTask: Task<Void, Never>?
 
+    /// Privacy keys this build is missing. Non-empty means a call cannot even
+    /// be attempted without iOS killing the app, so it is shown up front rather
+    /// than discovered by trying.
+    var missingPrivacyKeys: [String] { SpeechTranscription.missingUsageDescriptionKeys }
+
     var isAssistantAvailable: Bool { assistant.isAvailable }
     var assistantUnavailable: Assistant.Unavailable? { assistant.unavailable }
 
@@ -139,6 +144,15 @@ final class VoiceCallModel {
 
         // Anything reported from a previous attempt is answered by this one.
         lastUnfinishedStep = nil
+
+        let missing = SpeechTranscription.missingUsageDescriptionKeys
+        guard missing.isEmpty else {
+            phase = .failed(
+                "This build is missing \(missing.joined(separator: " and ")) in its Info.plist. "
+                    + "iOS terminates an app that touches the microphone or speech without them."
+            )
+            return
+        }
 
         do {
             // The microphone is asked for first, before any download: it is the

@@ -54,6 +54,10 @@ struct VoiceCallView: View {
                         LastFailureCard(step: step) { call.acknowledgeLastFailure() }
                     }
 
+                    if !call.missingPrivacyKeys.isEmpty {
+                        MissingKeysCard(keys: call.missingPrivacyKeys)
+                    }
+
                     if let unavailable = call.assistantUnavailable {
                         UnavailableCard(unavailable: unavailable)
                     } else if call.lines.isEmpty {
@@ -265,6 +269,25 @@ private struct LastFailureCard: View {
                 .foregroundStyle(.secondary)
             Button("Dismiss", action: dismiss)
                 .font(.callout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: Theme.cardRadius))
+    }
+}
+
+/// Shown when the build cannot legally ask for what the call needs.
+private struct MissingKeysCard: View {
+    let keys: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("This build cannot use the microphone", systemImage: "exclamationmark.octagon")
+                .font(.headline)
+            Text("Its Info.plist is missing \(keys.joined(separator: " and ")). iOS terminates an app that touches the microphone or speech without them, which looks like the app closing itself.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
