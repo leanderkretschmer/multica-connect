@@ -37,9 +37,13 @@ extension WorkspaceStore {
         return "\(lane.title)\(scope) (\(tasks.count)):\n" + lines.joined(separator: "\n") + more
     }
 
-    func describeProjects() -> String {
+    func describeProjects(onlyUnfinished: Bool = false) -> String {
         guard !projects.isEmpty else { return "There are no projects yet." }
-        return projects.map { project in
+        let listed = onlyUnfinished
+            ? projects.filter { $0.doneCount < $0.issueCount }
+            : projects
+        guard !listed.isEmpty else { return "Every project is finished." }
+        return listed.map { project in
             let progress = project.completion.map { " — \(Int($0 * 100))% done" } ?? ""
             return "\(project.title) (\(project.issueCount) tasks\(progress))"
         }

@@ -10,6 +10,10 @@ import Foundation
 final class SpeechNarrator: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var completion: (@MainActor () -> Void)?
+    /// The utterance the current ``completion`` belongs to, so a delegate
+    /// callback arriving late for a superseded utterance is ignored instead of
+    /// ending the wrong wait.
+    private var currentUtterance: AVSpeechUtterance?
 
     private(set) var isSpeaking = false
 
@@ -29,23 +33,37 @@ final class SpeechNarrator: NSObject {
             return
         }
 
+        // Whoever was waiting on the previous utterance is released here, before
+        // it is replaced. Dropping the old completion instead would strand its
+        // caller on an `await` that can never finish.
+        finishCurrent()
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
-        completion = onFinish
         let utterance = AVSpeechUtterance(string: spoken)
         utterance.voice = SpeechNarrator.voice(for: locale)
         utterance.prefersAssistiveTechnologySettings = true
+        currentUtterance = utterance
+        completion = onFinish
         isSpeaking = true
         synthesizer.speak(utterance)
     }
 
     func stop() {
-        guard synthesizer.isSpeaking else { return }
-        synthesizer.stopSpeaking(at: .immediate)
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
         isSpeaking = false
+        finishCurrent()
+    }
+
+    /// Ends the current wait exactly once, whatever caused it to end.
+    private func finishCurrent() {
+        let finish = completion
         completion = nil
+        currentUtterance = nil
+        finish?()
     }
 
     /// Picks the best installed voice for the locale, preferring the enhanced
@@ -83,21 +101,22 @@ extension SpeechNarrator: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in
-            isSpeaking = false
-            let finish = completion
-            completion = nil
-            finish?()
-        }
+        Task { @MainActor in ended(utterance) }
     }
 
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in
-            isSpeaking = false
-            completion = nil
-        }
+        Task { @MainActor in ended(utterance) }
+    }
+
+    /// Callbacks hop to the main actor, so one for an utterance that has since
+    /// been replaced can arrive after the next one started. Only the current
+    /// utterance is allowed to end the wait.
+    private func ended(_ utterance: AVSpeechUtterance) {
+        guard utterance === currentUtterance else { return }
+        isSpeaking = false
+        finishCurrent()
     }
 }

@@ -47,12 +47,15 @@ struct ListProjectsTool: Tool {
     let description = "List the projects in the workspace with how far along each one is."
 
     @Generable
-    struct Arguments {}
+    struct Arguments {
+        @Guide(description: "True to leave out projects whose work is all finished. Defaults to false.")
+        var onlyUnfinished: Bool?
+    }
 
     let store: WorkspaceStore
 
     func call(arguments: Arguments) async throws -> String {
-        await store.describeProjects()
+        await store.describeProjects(onlyUnfinished: arguments.onlyUnfinished ?? false)
     }
 }
 

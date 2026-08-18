@@ -11,11 +11,33 @@ final class VoiceCallModel {
     /// What the call is doing right now. The UI reads only this.
     enum Phase: Equatable {
         case idle
-        case preparing
+        /// Starting up, carrying which step is under way.
+        ///
+        /// The step is on screen the whole time it runs, so if the app dies
+        /// during start-up the last label names the step that killed it. That
+        /// is the only diagnosis available when a framework traps instead of
+        /// throwing, because a trap leaves no error to catch and report.
+        case preparing(Step)
         case listening
         case thinking
         case speaking
         case failed(String)
+
+        enum Step: String, Equatable {
+            case microphone
+            case speechModel
+            case assistant
+            case audio
+
+            var label: String {
+                switch self {
+                case .microphone: "Asking for the microphone…"
+                case .speechModel: "Preparing the speech model…"
+                case .assistant: "Waking the assistant…"
+                case .audio: "Opening the microphone…"
+                }
+            }
+        }
 
         var isActive: Bool {
             switch self {
@@ -27,11 +49,23 @@ final class VoiceCallModel {
         var label: String {
             switch self {
             case .idle: "Tap to talk"
-            case .preparing: "Getting ready…"
+            case .preparing(let step): step.label
             case .listening: "Listening"
             case .thinking: "Thinking…"
             case .speaking: "Speaking"
             case .failed: "Something went wrong"
+            }
+        }
+
+        /// Extra line under the status, where waiting needs explaining.
+        var hint: String? {
+            switch self {
+            case .preparing(.speechModel):
+                "The first run downloads the language model. This can take a few minutes."
+            case .listening:
+                "Pause when you are done and it will answer."
+            default:
+                nil
             }
         }
     }
@@ -96,11 +130,24 @@ final class VoiceCallModel {
             return
         }
 
-        phase = .preparing
+        // The microphone is asked for first, before any download: it is the one
+        // step that can be refused, and making someone wait through a model
+        // download only to be asked and say no is the wrong order.
+        phase = .preparing(.microphone)
+        guard await SpeechTranscription.requestMicrophoneAccess() else {
+            phase = .failed(SpeechTranscription.Failure.microphoneDenied.localizedDescription)
+            return
+        }
+
         do {
+            phase = .preparing(.speechModel)
             let locale = try await transcription.prepare(locale: Locale.current)
             activeLocale = locale
+
+            phase = .preparing(.assistant)
             assistant.startConversation()
+
+            phase = .preparing(.audio)
             listen(to: try await transcription.start(locale: locale))
             phase = .listening
         } catch {

@@ -22,9 +22,6 @@ struct VoiceCallView: View {
             .navigationTitle("Multica")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    StatusBadge(phase: call.phase)
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         call.clearTranscript()
@@ -136,11 +133,21 @@ struct VoiceCallView: View {
             }
             .disabled(!call.isAssistantAvailable)
 
-            Text(call.phase.label)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
-                .animation(.default, value: call.phase)
+            VStack(spacing: 2) {
+                Text(call.phase.label)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(call.phase.isActive ? .primary : .secondary)
+                if let hint = call.phase.hint {
+                    Text(hint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal)
+            .contentTransition(.opacity)
+            .animation(.default, value: call.phase)
         }
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity)
@@ -154,34 +161,6 @@ struct VoiceCallView: View {
 }
 
 // MARK: - Pieces
-
-private struct StatusBadge: View {
-    let phase: VoiceCallModel.Phase
-
-    private var tint: Color {
-        switch phase {
-        case .idle: .secondary
-        case .preparing: .orange
-        case .listening: .green
-        case .thinking: .blue
-        case .speaking: .purple
-        case .failed: .red
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 8, height: 8)
-            Text(phase.label)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Call status: \(phase.label)")
-    }
-}
 
 private struct TranscriptBubble: View {
     let line: VoiceCallModel.Line
