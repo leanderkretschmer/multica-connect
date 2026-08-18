@@ -50,6 +50,10 @@ struct VoiceCallView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
+                    if let step = call.lastUnfinishedStep, !call.phase.isActive {
+                        LastFailureCard(step: step) { call.acknowledgeLastFailure() }
+                    }
+
                     if let unavailable = call.assistantUnavailable {
                         UnavailableCard(unavailable: unavailable)
                     } else if call.lines.isEmpty {
@@ -234,6 +238,33 @@ private struct StarterCard: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: Theme.cardRadius))
+    }
+}
+
+/// What a previous attempt was doing when it stopped without finishing.
+///
+/// If the app was killed mid-start-up there is no crash report in front of the
+/// person holding the phone, and nothing left on screen. This is the report.
+private struct LastFailureCard: View {
+    let step: VoiceCallModel.Phase.Step
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("The last attempt did not finish", systemImage: "exclamationmark.triangle")
+                .font(.headline)
+            Text("It stopped at: \(step.label)")
+                .font(.callout)
+                .textSelection(.enabled)
+            Text("If the app closed itself here, that step is the cause. Sending this line is enough to identify it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Dismiss", action: dismiss)
+                .font(.callout)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()

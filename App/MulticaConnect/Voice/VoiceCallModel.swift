@@ -94,6 +94,12 @@ final class VoiceCallModel {
     /// Typed input, for when speaking is not an option.
     var typedMessage = ""
 
+    /// Where a previous attempt stopped without finishing, if there was one.
+    ///
+    /// Read once at launch: a crash during start-up leaves no other trace, and
+    /// the person holding the phone is the only one who can report it.
+    private(set) var lastUnfinishedStep: Phase.Step?
+
     private let store: WorkspaceStore
     private let assistant: Assistant
     private let transcription = SpeechTranscription()
@@ -111,6 +117,7 @@ final class VoiceCallModel {
     var assistantUnavailable: Assistant.Unavailable? { assistant.unavailable }
 
     init(store: WorkspaceStore) {
+        self.lastUnfinishedStep = StartupBreadcrumb.unfinishedStep
         self.store = store
         let coordinator = DelegationCoordinator(store: store)
         self.delegationCoordinator = coordinator
@@ -130,30 +137,41 @@ final class VoiceCallModel {
             return
         }
 
-        // The microphone is asked for first, before any download: it is the one
-        // step that can be refused, and making someone wait through a model
-        // download only to be asked and say no is the wrong order.
-        phase = .preparing(.microphone)
-        guard await SpeechTranscription.requestMicrophoneAccess() else {
-            phase = .failed(SpeechTranscription.Failure.microphoneDenied.localizedDescription)
-            return
-        }
+        // Anything reported from a previous attempt is answered by this one.
+        lastUnfinishedStep = nil
 
         do {
-            phase = .preparing(.speechModel)
+            // The microphone is asked for first, before any download: it is the
+            // one step that can be refused, and making someone wait through a
+            // model download only to be asked and say no is the wrong order.
+            begin(.microphone)
+            guard try await SpeechTranscription.requestMicrophoneAccess() else {
+                throw SpeechTranscription.Failure.microphoneDenied
+            }
+
+            begin(.speechModel)
             let locale = try await transcription.prepare(locale: Locale.current)
             activeLocale = locale
 
-            phase = .preparing(.assistant)
+            begin(.assistant)
             assistant.startConversation()
 
-            phase = .preparing(.audio)
+            begin(.audio)
             listen(to: try await transcription.start(locale: locale))
+
+            StartupBreadcrumb.clear()
             phase = .listening
         } catch {
+            StartupBreadcrumb.clear()
             phase = .failed(error.localizedDescription)
             await teardown()
         }
+    }
+
+    /// Enters a start-up step and records it somewhere a crash cannot erase.
+    private func begin(_ step: Phase.Step) {
+        StartupBreadcrumb.begin(step)
+        phase = .preparing(step)
     }
 
     func endCall() async {
@@ -161,7 +179,14 @@ final class VoiceCallModel {
         phase = .idle
     }
 
+    /// Dismisses the report from a previous attempt.
+    func acknowledgeLastFailure() {
+        lastUnfinishedStep = nil
+        StartupBreadcrumb.clear()
+    }
+
     private func teardown() async {
+        StartupBreadcrumb.clear()
         endpointTask?.cancel()
         endpointTask = nil
         respondTask?.cancel()

@@ -19,6 +19,7 @@ final class SpeechTranscription {
 
     enum Failure: LocalizedError {
         case microphoneDenied
+        case missingUsageDescription(String)
         case notSupportedOnDevice
         case localeUnsupported(Locale)
         case assetInstallFailed(String)
@@ -28,6 +29,8 @@ final class SpeechTranscription {
             switch self {
             case .microphoneDenied:
                 "Multica Connect needs the microphone to hear you. Turn it on in Settings."
+            case .missingUsageDescription(let key):
+                "This build is missing \(key) in its Info.plist, so iOS will not allow the microphone. Add it in the target's build settings."
             case .notSupportedOnDevice:
                 "This device can't transcribe speech on device."
             case .localeUnsupported(let locale):
@@ -69,7 +72,17 @@ final class SpeechTranscription {
     // MARK: - Permission and assets
 
     /// Asks for the microphone once. Returns `false` if the person said no.
-    static func requestMicrophoneAccess() async -> Bool {
+    ///
+    /// The usage description is checked first because iOS does not refuse an app
+    /// that asks without one — it kills it, with no error to catch. Checking
+    /// turns that guaranteed crash into a sentence naming the missing key.
+    static func requestMicrophoneAccess() async throws -> Bool {
+        let key = "NSMicrophoneUsageDescription"
+        let description = Bundle.main.object(forInfoDictionaryKey: key) as? String
+        guard let description, !description.isEmpty else {
+            throw Failure.missingUsageDescription(key)
+        }
+
         switch AVAudioApplication.shared.recordPermission {
         case .granted: return true
         case .denied: return false
@@ -128,7 +141,7 @@ final class SpeechTranscription {
     @discardableResult
     func start(locale: Locale) async throws -> AsyncStream<Update> {
         guard !isRunning else { throw Failure.audioEngine("A call is already running.") }
-        guard await SpeechTranscription.requestMicrophoneAccess() else {
+        guard try await SpeechTranscription.requestMicrophoneAccess() else {
             throw Failure.microphoneDenied
         }
 
@@ -332,19 +345,39 @@ private final class TapFeed: @unchecked Sendable {
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
         guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
 
-        var consumed = false
+        let source = ConversionSource(buffer)
         var error: NSError?
         let status = converter.convert(to: output, error: &error) { _, inputStatus in
-            if consumed {
-                inputStatus.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            inputStatus.pointee = .haveData
-            return buffer
+            source.next(inputStatus)
         }
 
         guard status != .error, output.frameLength > 0 else { return nil }
         return output
+    }
+}
+
+/// Hands one buffer to `AVAudioConverter`, then reports that the input is spent.
+///
+/// The converter calls this block synchronously, on the thread that asked for
+/// the conversion — but the block is typed `@Sendable`, so a captured `var` and
+/// a captured buffer are both flagged. Putting the one-shot state in a class
+/// says what is actually true (one buffer, handed over once, from one thread)
+/// instead of silencing the check with `@preconcurrency`.
+private final class ConversionSource: @unchecked Sendable {
+    private let buffer: AVAudioPCMBuffer
+    private var isConsumed = false
+
+    init(_ buffer: AVAudioPCMBuffer) {
+        self.buffer = buffer
+    }
+
+    func next(_ status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        guard !isConsumed else {
+            status.pointee = .noDataNow
+            return nil
+        }
+        isConsumed = true
+        status.pointee = .haveData
+        return buffer
     }
 }
