@@ -87,9 +87,9 @@ final class SpeechTranscription {
     func prepare(locale requested: Locale) async throws -> Locale {
         guard SpeechTranscriber.isAvailable else { throw Failure.notSupportedOnDevice }
 
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested)
-            ?? SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US"))
-        else { throw Failure.localeUnsupported(requested) }
+        guard let locale = await SpeechTranscription.supportedLocale(for: requested) else {
+            throw Failure.localeUnsupported(requested)
+        }
 
         let module = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
@@ -104,6 +104,18 @@ final class SpeechTranscription {
             reservedLocale = locale
         }
         return locale
+    }
+
+    /// The requested locale, a regional equivalent of it, or English as a last
+    /// resort.
+    ///
+    /// Written as two statements rather than one `??`: the right-hand side of
+    /// `??` is an autoclosure, and an autoclosure cannot be `async`.
+    private static func supportedLocale(for requested: Locale) async -> Locale? {
+        if let exact = await SpeechTranscriber.supportedLocale(equivalentTo: requested) {
+            return exact
+        }
+        return await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US"))
     }
 
     // MARK: - Running

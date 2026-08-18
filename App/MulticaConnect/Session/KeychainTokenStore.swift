@@ -6,7 +6,12 @@ import Security
 ///
 /// The token never touches `UserDefaults`, never appears in a log line, and is
 /// not compiled into the binary — it arrives when someone signs in.
-struct KeychainTokenStore: Sendable {
+///
+/// Deliberately not `Sendable`: `UserDefaults` is not, and this store is only
+/// ever reached from ``AppSession``, which is main-actor isolated. Leaving the
+/// conformance off means the compiler says so if that ever stops being true,
+/// rather than a `nonisolated(unsafe)` quietly waving the check through.
+struct KeychainTokenStore {
     private let service: String
     private let account = "multica-access-token"
     private let defaults: UserDefaults

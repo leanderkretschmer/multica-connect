@@ -78,7 +78,11 @@ and answers itself.
 
 1. `open App/MulticaConnect.xcodeproj` — `MulticaKit` resolves as a local
    package from the repository root.
-2. Set your own team under Signing & Capabilities.
+2. **Set a signing team.** The project ships without one, so a fresh clone fails
+   with *"Signing for MulticaConnect requires a development team"*. Select the
+   **MulticaConnect** target → **Signing & Capabilities** → pick your team under
+   **Team**. If `stream.multica.connect` is already taken on your account, change
+   the bundle identifier in the same pane.
 3. Build and run on a device. The Simulator has no Apple Intelligence, so the
    call screen will report the model as unavailable there; the rest works.
 4. Sign in with three things:
