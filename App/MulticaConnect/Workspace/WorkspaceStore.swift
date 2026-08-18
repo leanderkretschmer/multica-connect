@@ -101,7 +101,12 @@ final class WorkspaceStore {
             async let issuesTask = client.allIssues()
             async let agentsTask = client.agents()
 
-            let (projects, issues, agents) = try await (projectsTask, issuesTask, agentsTask)
+            let projects = try await projectsTask
+            let issues = try await issuesTask
+            // Agents only matter for handing work off, so losing them must not
+            // cost the board.
+            let agents = (try? await agentsTask) ?? []
+
             self.projects = projects.sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
             self.issues = issues
             self.agents = agents.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }

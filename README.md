@@ -85,11 +85,15 @@ and answers itself.
    the bundle identifier in the same pane.
 3. Build and run on a device. The Simulator has no Apple Intelligence, so the
    call screen will report the model as unavailable there; the rest works.
-4. Sign in with three things:
+4. Sign in with two things:
    - **Server** — the Multica server host, e.g. `agents.example.com`
-   - **Access token** — a Multica access token, stored in the keychain on this
-     device only
-   - **Workspace ID** — the workspace UUID to open
+   - **Access token** — a `mul_…` access token from your Multica account
+     settings, kept in the keychain on this device only
+
+   The app then asks the server which workspaces that token can reach and lets
+   you pick one; with exactly one it skips the question. No UUID to type. If the
+   server declines to list them — which happens for a token scoped to a single
+   workspace — the picker falls back to entering the id by hand.
 
 Nothing is compiled in. There is no token, host, or workspace in the source.
 

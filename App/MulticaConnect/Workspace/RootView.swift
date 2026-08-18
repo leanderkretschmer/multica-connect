@@ -13,6 +13,8 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .signedOut:
             SignInView()
+        case .choosingWorkspace(let choice):
+            WorkspacePickerView(choice: choice)
         case .signedIn(let connection):
             // Keyed on the workspace so switching accounts rebuilds the store
             // rather than showing the previous workspace's tasks.

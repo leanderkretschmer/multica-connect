@@ -39,6 +39,33 @@ public struct Issue: Codable, Sendable, Hashable, Identifiable {
             self.name = name
             self.color = color
         }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, color
+        }
+
+        /// Accepts an object, or a bare string for servers that send label
+        /// names only. A label with neither an id nor a name is rejected so the
+        /// caller can drop it instead of rendering an empty pill.
+        public init(from decoder: any Decoder) throws {
+            if let name = try? decoder.singleValueContainer().decode(String.self) {
+                self.id = name
+                self.name = name
+                self.color = nil
+                return
+            }
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let id = try c.decodeIfPresent(String.self, forKey: .id)
+            let name = try c.decodeIfPresent(String.self, forKey: .name)
+            guard id != nil || name != nil else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "A label needs an id or a name.")
+                )
+            }
+            self.id = id ?? name!
+            self.name = name ?? id!
+            self.color = try c.decodeIfPresent(String.self, forKey: .color)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -76,7 +103,8 @@ public struct Issue: Codable, Sendable, Hashable, Identifiable {
         position = try c.decodeIfPresent(Int.self, forKey: .position)
         startDate = try c.decodeIfPresent(String.self, forKey: .startDate)
         dueDate = try c.decodeIfPresent(String.self, forKey: .dueDate)
-        labels = try c.decodeIfPresent([Label].self, forKey: .labels) ?? []
+        // Labels are decoration; a shape surprise here must not cost the task.
+        labels = (try? c.decodeIfPresent([Label].self, forKey: .labels)).flatMap { $0 } ?? []
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
         workspaceID = try c.decodeIfPresent(String.self, forKey: .workspaceID)
@@ -145,15 +173,14 @@ public struct IssuePage: Codable, Sendable {
     }
 
     public init(from decoder: any Decoder) throws {
-        // The list endpoint wraps its results; search returns a bare array.
-        if let c = try? decoder.container(keyedBy: CodingKeys.self),
-           let issues = try? c.decode([Issue].self, forKey: .issues) {
+        let keyed = try? decoder.container(keyedBy: CodingKeys.self)
+        if let keyed, let issues = try? keyed.decode([Issue].self, forKey: .issues) {
             self.issues = issues
-            let more = try? c.decodeIfPresent(Bool.self, forKey: .hasMore)
-            self.hasMore = more.flatMap { $0 } ?? false
         } else {
-            self.issues = try decoder.singleValueContainer().decode([Issue].self)
-            self.hasMore = false
+            // Bare array, or wrapped under a key this version has not seen.
+            self.issues = try ListPayload<Issue>(from: decoder).items
         }
+        let more = try? keyed?.decodeIfPresent(Bool.self, forKey: .hasMore)
+        self.hasMore = more.flatMap { $0 } ?? false
     }
 }

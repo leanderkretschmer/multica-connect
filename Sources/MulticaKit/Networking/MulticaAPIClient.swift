@@ -29,7 +29,27 @@ public actor MulticaAPIClient {
     }
 
     public func workspaces() async throws -> [Workspace] {
-        try await get(MulticaRoutes.workspaces)
+        let payload: ListPayload<Workspace> = try await get(MulticaRoutes.workspaces)
+        return payload.items
+    }
+
+    /// Everything sign-in needs before a workspace has been picked: who the
+    /// token belongs to, and which workspaces it can reach.
+    ///
+    /// The workspace list is best effort — a token scoped to one workspace may
+    /// not be allowed to enumerate them, and that must not block sign-in.
+    public static func signIn(
+        serverURL: URL,
+        token: String,
+        transport: any HTTPTransport = URLSessionTransport(timeout: 30)
+    ) async throws -> (user: CurrentUser, workspaces: [Workspace]) {
+        let client = MulticaAPIClient(
+            credentials: MulticaCredentials(serverURL: serverURL, token: token, workspaceID: ""),
+            transport: transport
+        )
+        let user = try await client.currentUser()
+        let workspaces = (try? await client.workspaces()) ?? []
+        return (user, workspaces)
     }
 
     // MARK: - Projects
@@ -37,7 +57,8 @@ public actor MulticaAPIClient {
     public func projects(status: ProjectStatus? = nil) async throws -> [Project] {
         var query: [URLQueryItem] = []
         if let status { query.append(URLQueryItem(name: "status", value: status.rawValue)) }
-        return try await get(MulticaRoutes.projects, query: query)
+        let payload: ListPayload<Project> = try await get(MulticaRoutes.projects, query: query)
+        return payload.items
     }
 
     public func project(id: String) async throws -> Project {
@@ -145,7 +166,11 @@ public actor MulticaAPIClient {
         if let since {
             query.append(URLQueryItem(name: "since", value: MulticaAPIClient.timestamp(since)))
         }
-        return try await get(MulticaRoutes.issueComments(issueID), query: query)
+        let payload: ListPayload<IssueComment> = try await get(
+            MulticaRoutes.issueComments(issueID),
+            query: query
+        )
+        return payload.items
     }
 
     @discardableResult
@@ -164,8 +189,8 @@ public actor MulticaAPIClient {
     // MARK: - Agents
 
     public func agents() async throws -> [Agent] {
-        let all: [Agent] = try await get(MulticaRoutes.agents)
-        return all.filter { !$0.isArchived }
+        let payload: ListPayload<Agent> = try await get(MulticaRoutes.agents)
+        return payload.items.filter { !$0.isArchived }
     }
 
     // MARK: - Request plumbing
@@ -210,7 +235,11 @@ public actor MulticaAPIClient {
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
         request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: MulticaRoutes.Header.authorization)
-        request.setValue(credentials.workspaceID, forHTTPHeaderField: MulticaRoutes.Header.workspace)
+        // Empty means "no workspace chosen yet" — during sign-in the app asks
+        // the server which workspaces the token can reach before it can know one.
+        if !credentials.workspaceID.isEmpty {
+            request.setValue(credentials.workspaceID, forHTTPHeaderField: MulticaRoutes.Header.workspace)
+        }
         request.setValue("application/json", forHTTPHeaderField: MulticaRoutes.Header.accept)
         if let body {
             request.setValue("application/json", forHTTPHeaderField: MulticaRoutes.Header.contentType)
@@ -236,7 +265,7 @@ public actor MulticaAPIClient {
             do {
                 return try decoder.decode(Response.self, from: data)
             } catch {
-                throw MulticaError.decoding("\(path): \(error)")
+                throw MulticaError.decoding(MulticaError.describe(error, path: path))
             }
         case 401, 403:
             throw MulticaError.unauthorized
