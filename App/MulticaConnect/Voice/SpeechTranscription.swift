@@ -50,7 +50,6 @@ final class SpeechTranscription {
     private var transcriber: SpeechTranscriber?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var resultsTask: Task<Void, Never>?
-    private var converter: AVAudioConverter?
     private var analyzerFormat: AVAudioFormat?
     private var reservedLocale: Locale?
 
@@ -59,7 +58,11 @@ final class SpeechTranscription {
 
     /// While `true` the tap drops audio — used so the assistant's own voice is
     /// never transcribed back as if the person had said it.
-    var isMuted = false
+    var isMuted = false {
+        didSet { feed?.setMuted(isMuted) }
+    }
+
+    private var feed: TapFeed?
 
     private(set) var isRunning = false
 
@@ -170,6 +173,7 @@ final class SpeechTranscription {
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        feed = nil
         inputContinuation?.finish()
         inputContinuation = nil
         updateContinuation?.finish()
@@ -182,7 +186,6 @@ final class SpeechTranscription {
         resultsTask = nil
         analyzer = nil
         transcriber = nil
-        converter = nil
 
         if let reservedLocale {
             _ = await AssetInventory.release(reservedLocale: reservedLocale)
@@ -215,12 +218,14 @@ final class SpeechTranscription {
             throw Failure.audioEngine("No input route is available.")
         }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            // The tap runs on a realtime audio thread; hop before touching state.
-            Task { @MainActor [weak self] in
-                self?.handle(buffer)
-            }
+        let feed = TapFeed(continuation: inputContinuation, target: analyzerFormat, isMuted: isMuted)
+        self.feed = feed
+        // The tap fires on a realtime audio thread. `TapFeed` is built to be
+        // called from there — the SDK does not mark this block `@Sendable`, so
+        // the compiler treats it as inheriting this method's isolation, which
+        // is why nothing here may touch main-actor state.
+        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
+            feed.receive(buffer)
         }
 
         engine.prepare()
@@ -230,44 +235,6 @@ final class SpeechTranscription {
             input.removeTap(onBus: 0)
             throw Failure.audioEngine(error.localizedDescription)
         }
-    }
-
-    private func handle(_ buffer: AVAudioPCMBuffer) {
-        guard isRunning, !isMuted, let continuation = inputContinuation else { return }
-        guard let converted = convert(buffer) else { return }
-        continuation.yield(AnalyzerInput(buffer: converted))
-    }
-
-    /// Resamples the microphone buffer into whatever format the analyzer asked
-    /// for. Returns the buffer untouched when the formats already agree.
-    private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let target = analyzerFormat else { return buffer }
-        if buffer.format == target { return buffer }
-
-        if converter == nil || converter?.outputFormat != target || converter?.inputFormat != buffer.format {
-            converter = AVAudioConverter(from: buffer.format, to: target)
-            converter?.primeMethod = .none
-        }
-        guard let converter else { return nil }
-
-        let ratio = target.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
-        guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
-
-        var consumed = false
-        var error: NSError?
-        let status = converter.convert(to: output, error: &error) { _, inputStatus in
-            if consumed {
-                inputStatus.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            inputStatus.pointee = .haveData
-            return buffer
-        }
-
-        guard status != .error, output.frameLength > 0 else { return nil }
-        return output
     }
 
     // MARK: - Results
@@ -295,5 +262,89 @@ final class SpeechTranscription {
                 updateContinuation?.yield(Update(text: finalizedText, isFinal: true))
             }
         }
+    }
+}
+
+/// Carries microphone buffers from the realtime audio thread to the analyzer.
+///
+/// This used to hop every buffer to the main actor. That cost a task per buffer
+/// and, worse, did not preserve their order: tasks are not delivered in the
+/// order they were created, and audio that reaches a transcriber out of order
+/// comes back as nonsense. It also read a main-actor object from the audio
+/// thread to do it.
+///
+/// Yielding straight from the tap fixes both — `AsyncStream.Continuation.yield`
+/// is thread-safe and keeps order. `@unchecked Sendable` is the honest label:
+/// the audio engine calls the tap serially, so the converter needs no lock, and
+/// the one flag the main actor writes is locked.
+private final class TapFeed: @unchecked Sendable {
+    private let continuation: AsyncStream<AnalyzerInput>.Continuation?
+    private let target: AVAudioFormat?
+
+    private let mutedLock = NSLock()
+    private var mutedFlag: Bool
+
+    /// Touched only from the tap, which the engine calls one buffer at a time.
+    private var converter: AVAudioConverter?
+
+    init(
+        continuation: AsyncStream<AnalyzerInput>.Continuation?,
+        target: AVAudioFormat?,
+        isMuted: Bool
+    ) {
+        self.continuation = continuation
+        self.target = target
+        self.mutedFlag = isMuted
+    }
+
+    func setMuted(_ muted: Bool) {
+        mutedLock.lock()
+        mutedFlag = muted
+        mutedLock.unlock()
+    }
+
+    private var isMuted: Bool {
+        mutedLock.lock()
+        defer { mutedLock.unlock() }
+        return mutedFlag
+    }
+
+    /// Called on the audio thread, once per buffer.
+    func receive(_ buffer: AVAudioPCMBuffer) {
+        guard !isMuted, let continuation else { return }
+        guard let converted = convert(buffer) else { return }
+        continuation.yield(AnalyzerInput(buffer: converted))
+    }
+
+    /// Resamples the microphone buffer into whatever format the analyzer asked
+    /// for. Returns the buffer untouched when the formats already agree.
+    private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let target else { return buffer }
+        if buffer.format == target { return buffer }
+
+        if converter == nil || converter?.outputFormat != target || converter?.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: target)
+            converter?.primeMethod = .none
+        }
+        guard let converter else { return nil }
+
+        let ratio = target.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
+        guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
+
+        var consumed = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, inputStatus in
+            if consumed {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard status != .error, output.frameLength > 0 else { return nil }
+        return output
     }
 }

@@ -101,22 +101,33 @@ extension SpeechNarrator: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in ended(utterance) }
+        ended(ObjectIdentifier(utterance))
     }
 
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in ended(utterance) }
+        ended(ObjectIdentifier(utterance))
     }
 
-    /// Callbacks hop to the main actor, so one for an utterance that has since
-    /// been replaced can arrive after the next one started. Only the current
-    /// utterance is allowed to end the wait.
-    private func ended(_ utterance: AVSpeechUtterance) {
-        guard utterance === currentUtterance else { return }
-        isSpeaking = false
-        finishCurrent()
+    /// Ends the wait for one utterance.
+    ///
+    /// These callbacks are `nonisolated`, so the hop to the main actor sends
+    /// whatever it captures across isolation — and `AVSpeechUtterance` is not
+    /// `Sendable`. Only its identity is needed to tell utterances apart, and
+    /// `ObjectIdentifier` is a `Sendable` value, so that is what crosses.
+    ///
+    /// The identity still has to be compared, not trusted: a callback for an
+    /// utterance that has since been replaced can land after the next one
+    /// started, and it must not end the new wait. ``currentUtterance`` keeps a
+    /// strong reference, so its address cannot be reused by another object
+    /// while the comparison matters.
+    private nonisolated func ended(_ id: ObjectIdentifier) {
+        Task { @MainActor in
+            guard let current = currentUtterance, ObjectIdentifier(current) == id else { return }
+            isSpeaking = false
+            finishCurrent()
+        }
     }
 }
