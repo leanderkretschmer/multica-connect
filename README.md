@@ -119,6 +119,10 @@ Unknown statuses and priorities decode to a labelled fallback rather than
 failing a whole page, so a server that grows a new status will not blank the
 board.
 
+Sub-tasks are derived from the issues already loaded rather than fetched from
+`/api/issues/{id}/children`, so an agent's drafted plan shows up on the parent
+without an extra round trip and without depending on that endpoint's grouping.
+
 ## Tests
 
 ```

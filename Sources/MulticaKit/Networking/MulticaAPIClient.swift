@@ -101,10 +101,6 @@ public actor MulticaAPIClient {
         try await get(MulticaRoutes.issue(id))
     }
 
-    public func children(of issueID: String) async throws -> [Issue] {
-        try await get(MulticaRoutes.issueChildren(issueID))
-    }
-
     public func searchIssues(_ query: String, limit: Int = 25) async throws -> [Issue] {
         let page: IssuePage = try await get(
             MulticaRoutes.issueSearch,

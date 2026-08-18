@@ -63,6 +63,20 @@ final class WorkspaceStore {
         issues.filter { $0.projectID == projectID }
     }
 
+    /// Sub-tasks of an issue, in stage order — this is what an agent's drafted
+    /// plan looks like once it lands. Derived from what is already loaded, so
+    /// it works offline and needs no extra round trip.
+    func subtasks(of issueID: String) -> [Issue] {
+        issues
+            .filter { $0.parentIssueID == issueID }
+            .sorted { lhs, rhs in
+                let left = lhs.stage ?? Int.max
+                let right = rhs.stage ?? Int.max
+                if left != right { return left < right }
+                return lhs.createdAt < rhs.createdAt
+            }
+    }
+
     func board(forProject projectID: String?) -> IssueBoard {
         guard let projectID else { return board }
         return IssueBoard(issues: issues(inProject: projectID))

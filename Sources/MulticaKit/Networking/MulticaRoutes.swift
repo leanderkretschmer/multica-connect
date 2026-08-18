@@ -16,7 +16,6 @@ public enum MulticaRoutes {
 
     public static func project(_ id: String) -> String { "\(projects)/\(id)" }
     public static func issue(_ id: String) -> String { "\(issues)/\(id)" }
-    public static func issueChildren(_ id: String) -> String { "\(issue(id))/children" }
     public static func issueComments(_ id: String) -> String { "\(issue(id))/comments" }
     public static func issueMetadata(_ id: String) -> String { "\(issue(id))/metadata" }
 

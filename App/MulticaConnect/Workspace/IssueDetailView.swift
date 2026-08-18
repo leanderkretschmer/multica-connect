@@ -79,6 +79,21 @@ struct IssueDetailView: View {
                 }
             }
 
+            let subtasks = store.subtasks(of: issueID)
+            if !subtasks.isEmpty {
+                Section {
+                    ForEach(subtasks) { subtask in
+                        NavigationLink(value: subtask) {
+                            SubtaskRow(issue: subtask)
+                        }
+                    }
+                } header: {
+                    Text("Sub-tasks")
+                } footer: {
+                    Text("\(subtasks.count(where: { $0.status == .done })) of \(subtasks.count) finished.")
+                }
+            }
+
             Section("Conversation") {
                 if isLoadingComments && comments.isEmpty {
                     HStack {
@@ -168,6 +183,34 @@ struct IssueDetailView: View {
         } catch {
             commentError = error.localizedDescription
         }
+    }
+}
+
+private struct SubtaskRow: View {
+    let issue: Issue
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: issue.status == .done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(issue.status == .done ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(issue.title)
+                    .lineLimit(2)
+                    .strikethrough(issue.status == .done, color: .secondary)
+                HStack(spacing: 6) {
+                    Text(issue.identifier)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if let stage = issue.stage {
+                        Pill(text: "Stage \(stage)", tint: .secondary)
+                    }
+                    if issue.needsAttention {
+                        Pill(text: "Blocked", symbolName: "exclamationmark.octagon", tint: .red)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
