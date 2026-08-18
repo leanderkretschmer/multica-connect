@@ -9,6 +9,14 @@ struct AccountView: View {
     @Environment(AppSession.self) private var session
     @State private var isConfirmingSignOut = false
 
+    /// Writes straight through to the store, which persists the choice.
+    private var handOffBinding: Binding<String> {
+        Binding(
+            get: { store.preferredAgent?.id ?? "" },
+            set: { store.preferredAgentID = $0 }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -29,11 +37,16 @@ struct AccountView: View {
                     }
                 }
 
-                Section("Agents") {
+                Section {
                     if store.agents.isEmpty {
                         Text("No agents in this workspace.")
                             .foregroundStyle(.secondary)
                     } else {
+                        Picker("Hand work to", selection: handOffBinding) {
+                            ForEach(store.agents) { agent in
+                                Text(agent.name).tag(agent.id)
+                            }
+                        }
                         ForEach(store.agents) { agent in
                             HStack(spacing: 10) {
                                 Text(agent.avatarEmoji ?? "🤖")
@@ -49,6 +62,10 @@ struct AccountView: View {
                             }
                         }
                     }
+                } header: {
+                    Text("Agents")
+                } footer: {
+                    Text("Anything the on-device model can't do during a call is handed to this agent, which answers on an issue.")
                 }
 
                 Section {

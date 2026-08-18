@@ -71,10 +71,10 @@ final class DelegationCoordinator: AgentDelegation {
         return "Handed that to \(agent.name). I will tell you when it answers."
     }
 
-    /// Falls back to the workspace's default agent when the model did not name one.
+    /// Falls back to the workspace's chosen agent when the model did not name one.
     private func resolveAgent(named name: String?) -> Agent? {
         guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return store.agents.first
+            return store.preferredAgent
         }
         return store.agent(named: name)
     }

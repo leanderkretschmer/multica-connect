@@ -18,10 +18,32 @@ final class WorkspaceStore {
     private(set) var loadError: String?
     private(set) var lastRefreshed: Date?
 
-    let client: MulticaAPIClient
+    /// Which agent voice hand-offs go to. Chosen once and remembered.
+    var preferredAgentID: String? {
+        didSet { defaults.set(preferredAgentID, forKey: WorkspaceStore.preferredAgentKey) }
+    }
 
-    init(client: MulticaAPIClient) {
+    let client: MulticaAPIClient
+    private let defaults: UserDefaults
+
+    private static let preferredAgentKey = "workspace.preferredAgentID"
+    /// The agent the app's own server half ships as. Used as the default when
+    /// nobody has picked one, so a fresh install works without configuration.
+    static let conventionalAgentName = "Connect"
+
+    init(client: MulticaAPIClient, defaults: UserDefaults = .standard) {
         self.client = client
+        self.defaults = defaults
+        self.preferredAgentID = defaults.string(forKey: WorkspaceStore.preferredAgentKey)
+    }
+
+    /// The agent a hand-off should go to: the chosen one, else the app's own
+    /// agent by name, else whatever the workspace has.
+    var preferredAgent: Agent? {
+        if let preferredAgentID, let chosen = agents.first(where: { $0.id == preferredAgentID }) {
+            return chosen
+        }
+        return agents.first { $0.name == WorkspaceStore.conventionalAgentName } ?? agents.first
     }
 
     // MARK: - Derived state
