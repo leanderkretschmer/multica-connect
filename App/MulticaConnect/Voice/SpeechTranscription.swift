@@ -48,7 +48,7 @@ final class SpeechTranscription {
     /// single stream across calls would drop the second call's transcript.
     private var updateContinuation: AsyncStream<Update>.Continuation?
 
-    private let engine = AVAudioEngine()
+    private let audio = AudioEngineController()
     private var analyzer: SpeechAnalyzer?
     private var transcriber: SpeechTranscriber?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
@@ -172,13 +172,14 @@ final class SpeechTranscription {
 
         do {
             try await analyzer.start(inputSequence: inputStream)
-            try startEngine()
+            try await startEngine()
         } catch {
             // Do not leave a half-open stream behind for the caller to iterate.
             continuation.finish()
             updateContinuation = nil
             resultsTask?.cancel()
             resultsTask = nil
+            feed = nil
             self.analyzer = nil
             self.transcriber = nil
             throw error
@@ -192,8 +193,7 @@ final class SpeechTranscription {
         guard isRunning else { return }
         isRunning = false
 
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        await audio.stop()
         feed = nil
         inputContinuation?.finish()
         inputContinuation = nil
@@ -222,40 +222,12 @@ final class SpeechTranscription {
 
     // MARK: - Audio
 
-    private func startEngine() throws {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            // `.voiceChat` gives echo cancellation, which is what keeps the
-            // assistant's own speech out of the transcript.
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .duckOthers])
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            throw Failure.audioEngine(error.localizedDescription)
-        }
-
-        let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else {
-            throw Failure.audioEngine("No input route is available.")
-        }
-
+    /// Hands the microphone work to ``AudioEngineController``, which runs it
+    /// off the main actor.
+    private func startEngine() async throws {
         let feed = TapFeed(continuation: inputContinuation, target: analyzerFormat, isMuted: isMuted)
         self.feed = feed
-        // The tap fires on a realtime audio thread. `TapFeed` is built to be
-        // called from there — the SDK does not mark this block `@Sendable`, so
-        // the compiler treats it as inheriting this method's isolation, which
-        // is why nothing here may touch main-actor state.
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
-            feed.receive(buffer)
-        }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw Failure.audioEngine(error.localizedDescription)
-        }
+        try await audio.start(feed: feed)
     }
 
     // MARK: - Results
@@ -298,7 +270,7 @@ final class SpeechTranscription {
 /// is thread-safe and keeps order. `@unchecked Sendable` is the honest label:
 /// the audio engine calls the tap serially, so the converter needs no lock, and
 /// the one flag the main actor writes is locked.
-private final class TapFeed: @unchecked Sendable {
+final class TapFeed: @unchecked Sendable {
     private let continuation: AsyncStream<AnalyzerInput>.Continuation?
     private let target: AVAudioFormat?
 
