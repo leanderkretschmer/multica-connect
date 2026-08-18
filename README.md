@@ -71,8 +71,15 @@ and answers itself.
 - Xcode 26 or later, iOS 26 or later.
 - A device with Apple Intelligence enabled for the voice assistant. Without it
   the app says so plainly and everything except the call still works.
-- The speech model for your language is downloaded once by the system on first
-  use.
+- The speech model for your language is installed by the system on first use.
+
+Neither model ships inside the app, and neither can. The on-device LLM and the
+speech models are **system assets**: iOS owns them, installs them through
+`AssetInventory`, and shares one copy across every app on the device. There is
+no API to bundle them, which is also why they cost the app nothing in download
+size and nothing to run. The app checks whether the model is already installed
+before saying a word about it, and shows real progress when one is genuinely
+being fetched.
 
 ## Running it
 

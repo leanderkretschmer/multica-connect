@@ -58,9 +58,11 @@ struct VoiceCallView: View {
                         MissingKeysCard(keys: call.missingPrivacyKeys)
                     }
 
-                    if let unavailable = call.assistantUnavailable {
+                    if case .preparing(let step) = call.phase {
+                        PreparingCard(step: step, downloadProgress: call.modelDownloadProgress)
+                    } else if let unavailable = call.assistantUnavailable {
                         UnavailableCard(unavailable: unavailable)
-                    } else if call.lines.isEmpty {
+                    } else if call.lines.isEmpty, !call.phase.isActive {
                         StarterCard(taskCount: store.board.openCount)
                     }
 
@@ -213,6 +215,33 @@ private struct TranscriptBubble: View {
         .frame(maxWidth: .infinity, alignment: isFromPerson ? .trailing : .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(speakerLabel) said: \(line.text)")
+    }
+}
+
+/// The single thing on screen while a call is starting.
+///
+/// Everything else is hidden meanwhile: a wall of stacked cards during start-up
+/// reads as something having gone wrong.
+private struct PreparingCard: View {
+    let step: VoiceCallModel.Phase.Step
+    let downloadProgress: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(step.label, systemImage: "hourglass")
+                .font(.headline)
+
+            if let downloadProgress {
+                ProgressView(value: downloadProgress)
+                    .tint(.accentColor)
+                Text("\(Int(downloadProgress * 100))% — iOS is installing the speech model for your language. It is a system model, so this happens once and every app on the device shares it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: Theme.cardRadius))
     }
 }
 

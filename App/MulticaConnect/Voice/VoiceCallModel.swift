@@ -60,12 +60,8 @@ final class VoiceCallModel {
         /// Extra line under the status, where waiting needs explaining.
         var hint: String? {
             switch self {
-            case .preparing(.speechModel):
-                "The first run downloads the language model. This can take a few minutes."
-            case .listening:
-                "Pause when you are done and it will answer."
-            default:
-                nil
+            case .listening: "Pause when you are done and it will answer."
+            default: nil
             }
         }
     }
@@ -93,6 +89,10 @@ final class VoiceCallModel {
 
     /// Typed input, for when speaking is not an option.
     var typedMessage = ""
+
+    /// 0…1 while the system installs a speech model, `nil` when nothing is
+    /// downloading — which is the normal case after the first run.
+    private(set) var modelDownloadProgress: Double?
 
     /// Where a previous attempt stopped without finishing, if there was one.
     ///
@@ -164,7 +164,10 @@ final class VoiceCallModel {
             }
 
             begin(.speechModel)
-            let locale = try await transcription.prepare(locale: Locale.current)
+            let locale = try await transcription.prepare(locale: Locale.current) { [weak self] fraction in
+                self?.modelDownloadProgress = fraction
+            }
+            modelDownloadProgress = nil
             activeLocale = locale
 
             begin(.assistant)
@@ -177,6 +180,7 @@ final class VoiceCallModel {
             phase = .listening
         } catch {
             StartupBreadcrumb.clear()
+            modelDownloadProgress = nil
             phase = .failed(error.localizedDescription)
             await teardown()
         }

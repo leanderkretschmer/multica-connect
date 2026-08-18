@@ -108,7 +108,12 @@ final class SpeechTranscription {
     ///
     /// - Returns: the locale that will actually be used, which may be a
     ///   regional equivalent of the one asked for.
-    func prepare(locale requested: Locale) async throws -> Locale {
+    /// - Parameter onProgress: called with 0…1 while a model is downloading, and
+    ///   not at all when one is already installed.
+    func prepare(
+        locale requested: Locale,
+        onProgress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }
+    ) async throws -> Locale {
         guard SpeechTranscriber.isAvailable else { throw Failure.notSupportedOnDevice }
 
         guard let locale = await SpeechTranscription.supportedLocale(for: requested) else {
@@ -116,18 +121,46 @@ final class SpeechTranscription {
         }
 
         let module = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+
+        // Ask before announcing anything. A model already on the device needs no
+        // download, and saying otherwise makes a ready app look like it is
+        // stalling.
+        switch await AssetInventory.status(forModules: [module]) {
+        case .installed:
+            try await reserve(locale)
+            return locale
+        case .unsupported:
+            throw Failure.localeUnsupported(locale)
+        default:
+            break
+        }
+
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
+            // `AssetInstallationRequest` reports progress; polling it is enough
+            // for a label and avoids observing a non-Sendable `Progress`.
+            let watcher = Task { @MainActor in
+                while !Task.isCancelled {
+                    onProgress(request.progress.fractionCompleted)
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
+            defer { watcher.cancel() }
+
             do {
                 try await request.downloadAndInstall()
             } catch {
                 throw Failure.assetInstallFailed(error.localizedDescription)
             }
         }
-        // Reserving keeps the model from being evicted while the call runs.
+        try await reserve(locale)
+        return locale
+    }
+
+    /// Reserving keeps the model from being evicted while the call runs.
+    private func reserve(_ locale: Locale) async throws {
         if try await AssetInventory.reserve(locale: locale) {
             reservedLocale = locale
         }
-        return locale
     }
 
     /// The requested locale, a regional equivalent of it, or English as a last
